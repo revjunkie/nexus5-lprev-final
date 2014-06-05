@@ -3062,4 +3062,8 @@ config WALL_CLK_SYSFS
 	 Support the wallclk directory in sysfs filesystem to enable the
 	 wall clock simulation and read the current SFN.
 
+config AUTO_HOTPLUG
+	tristate "Use auto_hotplug driver"
+	help
+	 Use modified hotplug driver based from thalamus' auto_hotplug driver
 endif

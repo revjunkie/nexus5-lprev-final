@@ -227,7 +227,10 @@ static void lm3630_set_main_current_level(struct i2c_client *client, int level)
 			else if (level > dev->max_brightness)
 				level = dev->max_brightness;
 		if (backlight_dimmer) {	
-				int max_current;
+				unsigned int max_current;
+			if (level <= 14)
+				max_current = 1;
+			else if (level > 14)
 				max_current = level / 14;
 			lm3630_set_max_current_reg(dev, max_current);
  			lm3630_set_brightness_reg(dev, level);

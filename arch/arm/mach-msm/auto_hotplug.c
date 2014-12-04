@@ -46,7 +46,7 @@
 #define MIN_CPU			1
 #define MAX_CPU			4
 #define TOUCHPLUG_DURATION		10 /* seconds */
-#define HOTPLUG_RESPONSE	20
+#define SAMPLE_TIME	20
 
 /* Control flags */
 unsigned char flags;
@@ -63,7 +63,7 @@ unsigned int min_cpu;
 unsigned int max_cpu;
 unsigned int touchplug_duration;
 unsigned int sampling_periods;
-unsigned int hotplug_response;
+unsigned int sample_time;
 } rev = {
 	.shift_all = SHIFT_ALL,
 	.shift_cpu1 = SHIFT_CPU1,
@@ -73,7 +73,7 @@ unsigned int hotplug_response;
 	.max_cpu = MAX_CPU,
 	.touchplug_duration = TOUCHPLUG_DURATION,
 	.sampling_periods = SAMPLING_PERIODS,
-	.hotplug_response = HOTPLUG_RESPONSE,
+	.sample_time = SAMPLE_TIME,
 };
 
 static bool touchplug = true;
@@ -156,7 +156,7 @@ static void hotplug_decision_work_fn(struct work_struct *work)
 			schedule_work(&hotplug_online_all_work);
 			return;
 		} else if (flags & HOTPLUG_PAUSED) {
-			schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.hotplug_response)); 
+			schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time)); 
 			return;
 			/* Seperate the threshold from cpu1 and cpu2 to have greater control, 
 			*  since we already added a generic input boost function to online cpu1.
@@ -165,10 +165,13 @@ static void hotplug_decision_work_fn(struct work_struct *work)
 			*/
 		} else if ((avg_running >= rev.shift_cpu1) && (online_cpus < 2)) {
 			if (touchplug) {
-				schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.hotplug_response));
-			} else schedule_work(&hotplug_online_single_work);
+				flags |= HOTPLUG_PAUSED;				
+				schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
+			} else if (!touchplug) {
+				 schedule_work(&hotplug_online_single_work);
 			dprintk("auto_hotplug: Onlining CPU 1, avg running: %d\n", avg_running);
 			return;
+			}
 		} else if ((avg_running >= rev.shift_cpu2) && (online_cpus < 3)) {
 			dprintk("auto_hotplug: Onlining CPU 2, avg running: %d\n", avg_running);
 			schedule_work(&hotplug_online_single_work);
@@ -183,9 +186,10 @@ static void hotplug_decision_work_fn(struct work_struct *work)
 		 		else 		
 				schedule_delayed_work_on(0, &hotplug_offline_work, HZ);
 				return;
-			} else 
+			} else if (!touchplug) {
 				schedule_delayed_work_on(0, &hotplug_offline_work, HZ);
 			return;
+				}
 			}
 		}
 	}
@@ -193,7 +197,7 @@ static void hotplug_decision_work_fn(struct work_struct *work)
 	/*
 	 * Reduce the sampling rate dynamically based on online cpus.
 	 */
-	sampling_rate = msecs_to_jiffies(rev.hotplug_response) * online_cpus;
+	sampling_rate = msecs_to_jiffies(rev.sample_time) * online_cpus;
 
 	dprintk("sampling_rate is: %d\n", jiffies_to_msecs(sampling_rate));
 
@@ -211,8 +215,8 @@ static void __init hotplug_online_all_work_fn(struct work_struct *work)
 	/*
 	 * Pause for 1 second before even considering offlining a CPU
 	 */
-	schedule_delayed_work(&hotplug_unpause_work, HZ * 1);
-	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.hotplug_response));
+	schedule_delayed_work(&hotplug_unpause_work, HZ);
+	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
 }
 
 static void __init hotplug_online_single_work_fn(struct work_struct *work)
@@ -227,27 +231,28 @@ static void __init hotplug_online_single_work_fn(struct work_struct *work)
 			}
 		}
 	}
-	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.hotplug_response));
+	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
 }
 
 static void __init touchplug_boost_work_fn(struct work_struct *work)
 {
 	if (num_online_cpus() == 1) 
- 			cpu_up(1);
-	else
-	queue_delayed_work_on(0, hotplug_decision_wq, &hotplug_decision_work, 0);
+ 			cpu_up(1);	
 	
+	schedule_delayed_work_on(0, &hotplug_decision_work, 0);
 }
 static void hotplug_offline_work_fn(struct work_struct *work)
 {
 	int cpu;
 
 	for_each_online_cpu(cpu) {
-		if (num_online_cpus() > rev.min_cpu) 
-			cpu_down(num_online_cpus() - 1);
-			break;
+		if (num_online_cpus() > rev.min_cpu)
+			if (cpu) {
+				cpu_down(num_online_cpus() - 1);
+				break;
+		}
 	}
-	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.hotplug_response));
+	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
 }
 
 static void hotplug_unpause_work_fn(struct work_struct *work)
@@ -428,20 +433,20 @@ static ssize_t sampling_periods_store(struct device * dev, struct device_attribu
 	return size;
 }
 
-static ssize_t hotplug_response_show(struct device * dev, struct device_attribute * attr, char * buf)
+static ssize_t sample_time_show(struct device * dev, struct device_attribute * attr, char * buf)
 {
-	return sprintf(buf, "%d\n", rev.hotplug_response);
+	return sprintf(buf, "%d\n", rev.sample_time);
 }
 
-static ssize_t hotplug_response_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
+static ssize_t sample_time_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
 {
 	unsigned int val;
 
 	sscanf(buf, "%u", &val);
 
-	if (val != rev.hotplug_response && val >= 1 && val <= 500)
+	if (val != rev.sample_time && val >= 1 && val <= 500)
 	{
-		rev.hotplug_response = val;
+		rev.sample_time = val;
 	}
 
 	return size;
@@ -454,7 +459,7 @@ static DEVICE_ATTR(min_cpu, 0644, min_cpu_show, min_cpu_store);
 static DEVICE_ATTR(max_cpu, 0644, max_cpu_show, max_cpu_store);
 static DEVICE_ATTR(touchplug_duration, 0644, touchplug_duration_show, touchplug_duration_store);
 static DEVICE_ATTR(sampling_periods, 0644, sampling_periods_show, sampling_periods_store);
-static DEVICE_ATTR(hotplug_response, 0644, hotplug_response_show, hotplug_response_store);
+static DEVICE_ATTR(sample_time, 0644, sample_time_show, sample_time_store);
 
 static struct attribute *revshift_hotplug_attributes[] = 
     {
@@ -466,7 +471,7 @@ static struct attribute *revshift_hotplug_attributes[] =
 	&dev_attr_max_cpu.attr,
 	&dev_attr_touchplug_duration.attr,
 	&dev_attr_sampling_periods.attr,
-	&dev_attr_hotplug_response.attr,
+	&dev_attr_sample_time.attr,
 	NULL
     };
 

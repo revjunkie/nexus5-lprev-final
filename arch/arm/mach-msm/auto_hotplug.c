@@ -42,10 +42,10 @@
 #define SHIFT_ALL			500
 #define SHIFT_CPU1			280
 #define SHIFT_CPU2			450
-#define DOWN_SHIFT			80
+#define DOWN_SHIFT			100
 #define MIN_CPU			1
 #define MAX_CPU			4
-#define TOUCHPLUG_DURATION		10 /* seconds */
+#define TOUCHPLUG_DURATION		5 /* seconds */
 #define SAMPLE_TIME	20
 
 /* Control flags */
@@ -165,8 +165,9 @@ static void hotplug_decision_work_fn(struct work_struct *work)
 			*/
 		} else if ((avg_running >= rev.shift_cpu1) && (online_cpus < 2)) {
 			if (touchplug) {
-				flags |= HOTPLUG_PAUSED;				
+				cancel_work_sync(&hotplug_online_single_work);				
 				schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
+			return;
 			} else if (!touchplug) {
 				 schedule_work(&hotplug_online_single_work);
 			dprintk("auto_hotplug: Onlining CPU 1, avg running: %d\n", avg_running);
@@ -207,7 +208,7 @@ static void hotplug_decision_work_fn(struct work_struct *work)
 
 static void __init hotplug_online_all_work_fn(struct work_struct *work)
 {
-	int cpu;
+	unsigned int cpu;
 	for_each_possible_cpu(cpu) {
 		if (likely(!cpu_online(cpu))) 
 			cpu_up(cpu);
@@ -221,7 +222,7 @@ static void __init hotplug_online_all_work_fn(struct work_struct *work)
 
 static void __init hotplug_online_single_work_fn(struct work_struct *work)
 {
-	int cpu;
+	unsigned int cpu;
 	
 	for_each_possible_cpu(cpu) {
 		if (cpu) {
@@ -243,7 +244,7 @@ static void __init touchplug_boost_work_fn(struct work_struct *work)
 }
 static void hotplug_offline_work_fn(struct work_struct *work)
 {
-	int cpu;
+	unsigned int cpu;
 
 	for_each_online_cpu(cpu) {
 		if (num_online_cpus() > rev.min_cpu)

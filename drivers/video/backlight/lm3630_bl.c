@@ -213,7 +213,7 @@ static void lm3630_set_brightness_reg(struct lm3630_device *dev, int level)
 static unsigned int backlight_dimmer = 2;
 module_param(backlight_dimmer, int, 0644);
 
-static unsigned int min_brightness = 2;
+static unsigned int min_brightness = 3;
 module_param(min_brightness, int, 0644);
 
 static void lm3630_set_main_current_level(struct i2c_client *client, int level)

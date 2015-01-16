@@ -65,7 +65,7 @@ obj-$(CONFIG_CPU_V6) += idle-v6.o
 obj-$(CONFIG_CPU_V7) += idle-v7.o
 obj-$(CONFIG_MSM_JTAG) += jtag-fuse.o jtag.o
 obj-$(CONFIG_MSM_JTAG_MM) +=  jtag-fuse.o jtag-mm.o
-obj-$(CONFIG_AUTO_HOTPLUG) +=  auto_hotplug.o
+obj-$(CONFIG_REVSHIFT_HOTPLUG) +=  revshift_hotplug.o
 
 msm-etm-objs := etm.o
 obj-$(CONFIG_MSM_ETM) += msm-etm.o

@@ -32,7 +32,7 @@
 #include <linux/miscdevice.h>
 #include <linux/delay.h>
 
-#define SAMPLING_PERIODS 		12	
+#define SAMPLING_PERIODS 		21	
 #define INDEX_MAX_VALUE		(SAMPLING_PERIODS - 1)
 
 #define SHIFT_ALL				500
@@ -90,6 +90,7 @@ static unsigned int index;
 static inline void hotplug_all(void)
 {
 	unsigned int cpu;
+
 	for_each_possible_cpu(cpu) 
 		if (!cpu_online(cpu)) 
 			cpu_up(cpu);
@@ -113,8 +114,8 @@ static inline void hotplug_offline(void)
 	unsigned int cpu;
 
 	for_each_online_cpu(cpu) 
-		if (num_online_cpus() > rev.min_cpu)
-			if (cpu) {
+		if (num_online_cpus() > rev.min_cpu) {
+			if (cpu_online(cpu)) 
 				cpu_down(num_online_cpus() - 1); 
 				break;
 	}
@@ -142,6 +143,7 @@ static unsigned int  get_avg_running(void)
 	dprintk("average_running is: %d\n", avg_running);
 
 	return avg_running;
+
 }
 
 static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
@@ -155,33 +157,33 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 		sampling_rate = msecs_to_jiffies(rev.sample_time) * online_cpus;
 			dprintk("sampling_rate is: %d\n", jiffies_to_msecs(sampling_rate));
 
-		if ((avg_running >= rev.shift_all) && (online_cpus < available_cpus)) {
-			dprintk("auto_hotplug: Onlining all CPUs, avg running: %d\n", avg_running);
+		if ((avg_running > rev.shift_all) && (online_cpus < available_cpus)) {
+			dprintk("revshift: Onlining all CPUs, avg running: %d\n", avg_running);
 			hotplug_all();
-				goto sched;
+			
 			}
-		if ((avg_running >= rev.shift_cpu1) && (online_cpus < 2)) {
+		if ((avg_running > rev.shift_cpu1) && (online_cpus < 2)) {
 			if (touchplug) {
-				goto sched;
+				return;
 			} else if (!touchplug) {
 				 hotplug_one();
-					goto sched;
-			dprintk("auto_hotplug: Onlining CPU 1, avg running: %d\n", avg_running);
+					
+			dprintk("revshift: Onlining CPU 1, avg running: %d\n", avg_running);
 				}
 			}
-		 if ((avg_running >= rev.shift_cpu2) && (online_cpus < 3)) {
-			dprintk("auto_hotplug: Onlining CPU 2, avg running: %d\n", avg_running);
+		 if ((avg_running > rev.shift_cpu2) && (online_cpus < 3)) {
+			dprintk("revshift: Onlining CPU 2, avg running: %d\n", avg_running);
 			hotplug_one();
-				goto sched;
+				
 			} 
-		 if (avg_running <= disable_load) {
-				dprintk("auto_hotplug: Offlining CPU, avg running: %d\n", avg_running);
+		 if (avg_running < disable_load) {
+				dprintk("revshift: Offlining CPU, avg running: %d\n", avg_running);
 			if (touchplug) {
 				if (online_cpus == 2)
 						schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
 				else	
 					hotplug_offline();
-				goto sched;
+						goto sched;
 				}
 			if (!touchplug)
 				hotplug_offline();	
@@ -191,8 +193,11 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 	/*
 	 * Reduce the sampling rate dynamically based on online cpus.
 	 */
-	sched:
+
 	schedule_delayed_work_on(0, &hotplug_decision_work, sampling_rate);
+
+	sched:
+	schedule_delayed_work_on(0, &hotplug_decision_work, HZ);
 
 }
 

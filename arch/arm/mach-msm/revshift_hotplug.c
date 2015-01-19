@@ -12,7 +12,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 021rev.downshift_timer-1301, USA.
+ * 02110-1301, USA.
  *
  */
 
@@ -30,20 +30,19 @@
 #include <linux/input.h>
 #include <linux/device.h>
 #include <linux/miscdevice.h>
-#include <linux/timer.h>
 
-#define SAMPLING_PERIODS 		15
+#define SAMPLING_PERIODS 		11
 #define INDEX_MAX_VALUE		(SAMPLING_PERIODS - 1)
 
-#define SHIFT_ALL				500
-#define SHIFT_CPU1			250
+#define SHIFT_ALL				515
+#define SHIFT_CPU1			220
 #define SHIFT_CPU2			425
-#define DOWN_SHIFT			100
+#define DOWN_SHIFT			90
 #define MIN_CPU				1
 #define MAX_CPU				4
 #define TOUCHPLUG_DURATION		5000 /* 5 seconds */
 #define SAMPLE_TIME			20
-#define DOWNSHIFT_THRESHOLD	5
+#define DOWNSHIFT_THRESHOLD	15
 
 struct rev_tune
 {
@@ -54,9 +53,10 @@ unsigned int down_shift;
 unsigned int min_cpu;
 unsigned int max_cpu;
 unsigned int touchplug_duration;
-unsigned int sampling_periods;
 unsigned int sample_time;
 unsigned int downshift_threshold;
+unsigned int down_diff;
+unsigned int shift_diff;
 } rev = {
 	.shift_all = SHIFT_ALL,
 	.shift_cpu1 = SHIFT_CPU1,
@@ -65,7 +65,6 @@ unsigned int downshift_threshold;
 	.min_cpu = MIN_CPU,
 	.max_cpu = MAX_CPU,
 	.touchplug_duration = TOUCHPLUG_DURATION,
-	.sampling_periods = SAMPLING_PERIODS,
 	.sample_time = SAMPLE_TIME,
 	.downshift_threshold = DOWNSHIFT_THRESHOLD,
 };
@@ -89,7 +88,7 @@ static struct workqueue_struct *touchplug_wq;
 
 static unsigned int history[SAMPLING_PERIODS];
 static unsigned int index;
-static unsigned int diff = 0;
+
 
 static inline void hotplug_all(void)
 {
@@ -98,7 +97,7 @@ static inline void hotplug_all(void)
 	for_each_possible_cpu(cpu) 
 		if (!cpu_online(cpu)) 
 			cpu_up(cpu);
-	
+	rev.down_diff = 0;
 }
 
 static inline void hotplug_one(void)
@@ -109,9 +108,10 @@ static inline void hotplug_one(void)
 		if (cpu) {
 			if (!cpu_online(cpu)) 
 				cpu_up(cpu);		
+				dprintk("online CPU  %d\n", cpu);
 				break;
 	}
-	diff = 0;
+	rev.down_diff = 0;
 }
 
 static inline void hotplug_offline(void)
@@ -122,9 +122,10 @@ static inline void hotplug_offline(void)
 		if (num_online_cpus() > rev.min_cpu) {
 			if (cpu_online(cpu)) 
 				cpu_down(num_online_cpus() - 1); 
+				dprintk("offline CPU  %d\n", num_online_cpus() - 1);
 				break;
 	}
-	diff = 0;
+	rev.down_diff = 0;
 }
 
 static void __init touchplug_boost_work_fn(struct work_struct *work)
@@ -153,7 +154,7 @@ static unsigned int  get_avg_running(void)
 		dprintk("index is: %d\n", index);
 		dprintk("running is: %d\n", running);
 	
-	for (i = 0, j = index; i < rev.sampling_periods; i++, j--) {
+	for (i = 0, j = index; i < SAMPLING_PERIODS; i++, j--) {
 		avg_running += history[j];
 		if (unlikely(j == 0))
 			j = INDEX_MAX_VALUE;
@@ -162,7 +163,7 @@ static unsigned int  get_avg_running(void)
 	if (unlikely(index++ == INDEX_MAX_VALUE))
 		index = 0;
 
-	avg_running = avg_running / rev.sampling_periods;
+	avg_running = avg_running / SAMPLING_PERIODS;
 	dprintk("average_running is: %d\n", avg_running);
 
 	return avg_running;
@@ -182,32 +183,40 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 			hotplug_all();
 			dprintk("revshift: Onlining all CPUs, avg running: %d\n", avg_running);			
 			}
-		if (avg_running > rev.shift_cpu1 && online_cpus == 1) {
-			if (touchplug) {
+		if (avg_running > rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff < 5) {
+				rev.shift_diff++;
+				dprintk("shift_diff is %d\n", rev.shift_diff);
+			}
+		if (avg_running < rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff > 0) {
+				rev.shift_diff = 0;
+				dprintk("shift_diff reset to %d\n", rev.shift_diff);
+			}
+		if (avg_running > rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff >= 5) {
+			if (touchplug) 
 				get_avg_running();
-			} else hotplug_one();					
-			dprintk("revshift: Onlining CPU 1, avg running: %d\n", avg_running);
+				else hotplug_one();					
 			}
 		 if (avg_running > rev.shift_cpu2 && online_cpus == 2) {
-			hotplug_one();
-			dprintk("revshift: Onlining CPU 2, avg running: %d\n", avg_running);				
+			hotplug_one();		
 			} 
-		 if (avg_running < disable_load && diff < rev.downshift_threshold) {	
-					diff++;
-			dprintk("diff is %d\n", diff); 
+		 if (avg_running < disable_load && rev.down_diff < rev.downshift_threshold) {	
+				rev.down_diff++;
+				dprintk("down_diff is %d\n", rev.down_diff);
 			}
-		 if (avg_running < disable_load && diff >= rev.downshift_threshold) {
+		 if (avg_running > disable_load && rev.down_diff > 0) {	
+				rev.down_diff = 0;
+				dprintk("down_diff reset to %d\n", rev.down_diff);
+			}
+		 if (avg_running < disable_load && rev.down_diff >= rev.downshift_threshold) {
 					if (touchplug) {
 						if (online_cpus == 2)
 								schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
 						else 
 							hotplug_offline();
-							dprintk("revshift: Offlining CPU, avg running: %d\n", avg_running);
 								goto sched;
 						}
 					if (!touchplug)
 						hotplug_offline();
-						dprintk("revshift: Offlining CPU, avg running: %d\n", avg_running);
 							goto sched;
 					}
 
@@ -353,20 +362,20 @@ static ssize_t touchplug_duration_store(struct device * dev, struct device_attri
 	return size;
 }
 
-static ssize_t sampling_periods_show(struct device * dev, struct device_attribute * attr, char * buf)
+static ssize_t downshift_threshold_show(struct device * dev, struct device_attribute * attr, char * buf)
 {
-	return sprintf(buf, "%d\n", rev.sampling_periods);
+	return sprintf(buf, "%d\n", rev.downshift_threshold);
 }
 
-static ssize_t sampling_periods_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
+static ssize_t downshift_threshold_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
 {
 	unsigned int val;
 
 	sscanf(buf, "%u", &val);
 
-	if (val != rev.sampling_periods && val >= 1 && val <= 500)
+	if (val != rev.downshift_threshold && val >= 1 && val <= 500)
 	{
-		rev.sampling_periods = val;
+		rev.downshift_threshold = val;
 	}
 
 	return size;
@@ -397,7 +406,7 @@ static DEVICE_ATTR(down_shift, 0644, down_shift_show, down_shift_store);
 static DEVICE_ATTR(min_cpu, 0644, min_cpu_show, min_cpu_store);
 static DEVICE_ATTR(max_cpu, 0644, max_cpu_show, max_cpu_store);
 static DEVICE_ATTR(touchplug_duration, 0644, touchplug_duration_show, touchplug_duration_store);
-static DEVICE_ATTR(sampling_periods, 0644, sampling_periods_show, sampling_periods_store);
+static DEVICE_ATTR(downshift_threshold, 0644, downshift_threshold_show, downshift_threshold_store);
 static DEVICE_ATTR(sample_time, 0644, sample_time_show, sample_time_store);
 
 static struct attribute *revshift_hotplug_attributes[] = 
@@ -409,7 +418,7 @@ static struct attribute *revshift_hotplug_attributes[] =
 	&dev_attr_min_cpu.attr,
 	&dev_attr_max_cpu.attr,
 	&dev_attr_touchplug_duration.attr,
-	&dev_attr_sampling_periods.attr,
+	&dev_attr_downshift_threshold.attr,
 	&dev_attr_sample_time.attr,
 	NULL
     };

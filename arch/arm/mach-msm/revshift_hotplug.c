@@ -97,7 +97,9 @@ static inline void hotplug_all(void)
 	for_each_possible_cpu(cpu) 
 		if (!cpu_online(cpu)) 
 			cpu_up(cpu);
+	
 	rev.down_diff = 0;
+	rev.shift_diff = 0;
 }
 
 static inline void hotplug_one(void)
@@ -112,6 +114,7 @@ static inline void hotplug_one(void)
 				break;
 	}
 	rev.down_diff = 0;
+	rev.shift_diff = 0;
 }
 
 static inline void hotplug_offline(void)
@@ -126,6 +129,7 @@ static inline void hotplug_offline(void)
 				break;
 	}
 	rev.down_diff = 0;
+	rev.shift_diff = 0;
 }
 
 static void __init touchplug_boost_work_fn(struct work_struct *work)
@@ -196,20 +200,20 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 				get_avg_running();
 				else hotplug_one();					
 			}
-		 if (avg_running > rev.shift_cpu2 && online_cpus == 2) {
+		if (avg_running > rev.shift_cpu2 && online_cpus == 2) {
 			hotplug_one();		
 			} 
-		 if (avg_running < disable_load && rev.down_diff < rev.downshift_threshold) {	
+		if (avg_running < disable_load && rev.down_diff < rev.downshift_threshold) {	
 				rev.down_diff++;
 				dprintk("down_diff is %d\n", rev.down_diff);
 			}
-		 if (avg_running > disable_load && rev.down_diff > 0) {	
+		if (avg_running > disable_load && rev.down_diff > 0) {	
 				rev.down_diff = 0;
 				dprintk("down_diff reset to %d\n", rev.down_diff);
 			}
-		 if (avg_running < disable_load && rev.down_diff >= rev.downshift_threshold) {
-					if (touchplug) {
-						if (online_cpus == 2)
+		if (avg_running < disable_load && rev.down_diff >= rev.downshift_threshold) {
+				if (touchplug) {
+					if (online_cpus == 2)
 								schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
 						else 
 							hotplug_offline();

@@ -31,12 +31,12 @@
 #include <linux/device.h>
 #include <linux/miscdevice.h>
 
-#define SAMPLING_PERIODS 		11
+#define SAMPLING_PERIODS 		20
 #define INDEX_MAX_VALUE		(SAMPLING_PERIODS - 1)
 
-#define SHIFT_ALL				515
-#define SHIFT_CPU1			220
-#define SHIFT_CPU2			425
+#define SHIFT_ALL				560
+#define SHIFT_CPU1			270
+#define SHIFT_CPU2			480
 #define DOWN_SHIFT			90
 #define MIN_CPU				1
 #define MAX_CPU				4
@@ -106,13 +106,11 @@ static inline void hotplug_one(void)
 {
 	unsigned int cpu;
 	
-	for_each_possible_cpu(cpu) 
-		if (cpu) {
-			if (!cpu_online(cpu)) 
-				cpu_up(cpu);		
-				dprintk("online CPU  %d\n", cpu);
-				break;
-	}
+	cpu = cpumask_next_zero(0, cpu_online_mask);
+		if (cpu < nr_cpu_ids)
+			cpu_up(cpu);		
+			dprintk("online CPU  %d\n", cpu);
+			
 	rev.down_diff = 0;
 	rev.shift_diff = 0;
 }
@@ -125,7 +123,7 @@ static inline void hotplug_offline(void)
 		if (num_online_cpus() > rev.min_cpu) {
 			if (cpu_online(cpu)) 
 				cpu_down(num_online_cpus() - 1); 
-				dprintk("offline CPU  %d\n", num_online_cpus() - 1);
+				dprintk("offline CPU  %d\n", num_online_cpus());
 				break;
 	}
 	rev.down_diff = 0;
@@ -151,17 +149,15 @@ static void  __init touchplug_down_fn(struct work_struct *work)
 
 static unsigned int  get_avg_running(void)
 {
-	unsigned int running, i, j, avg_running = 0;
+	unsigned int running, i, avg_running = 0;
 
 	running = nr_running() * 100;
 	history[index] = running;
 		dprintk("index is: %d\n", index);
 		dprintk("running is: %d\n", running);
 	
-	for (i = 0, j = index; i < SAMPLING_PERIODS; i++, j--) {
-		avg_running += history[j];
-		if (unlikely(j == 0))
-			j = INDEX_MAX_VALUE;
+	for (i = 0; i < SAMPLING_PERIODS; i++) {
+		avg_running += history[i];
 	}
 
 	if (unlikely(index++ == INDEX_MAX_VALUE))
@@ -183,7 +179,7 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 		available_cpus = rev.max_cpu;
 		disable_load = rev.down_shift * online_cpus; 
 
-		if (avg_running > rev.shift_all && online_cpus < available_cpus) {
+		if (unlikely(avg_running > rev.shift_all && online_cpus < available_cpus)) {
 			hotplug_all();
 			dprintk("revshift: Onlining all CPUs, avg running: %d\n", avg_running);			
 			}
@@ -191,7 +187,7 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 				rev.shift_diff++;
 				dprintk("shift_diff is %d\n", rev.shift_diff);
 			}
-		if (avg_running < rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff > 0) {
+		if (avg_running <= rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff > 0) {
 				rev.shift_diff = 0;
 				dprintk("shift_diff reset to %d\n", rev.shift_diff);
 			}
@@ -207,7 +203,7 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 				rev.down_diff++;
 				dprintk("down_diff is %d\n", rev.down_diff);
 			}
-		if (avg_running > disable_load && rev.down_diff > 0) {	
+		if (avg_running >= disable_load && rev.down_diff > 0) {	
 				rev.down_diff = 0;
 				dprintk("down_diff reset to %d\n", rev.down_diff);
 			}

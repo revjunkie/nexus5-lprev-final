@@ -34,8 +34,8 @@
 #define SAMPLING_PERIODS 		20
 #define INDEX_MAX_VALUE		(SAMPLING_PERIODS - 1)
 
-#define SHIFT_ALL				560
-#define SHIFT_CPU1			270
+#define SHIFT_ALL				580
+#define SHIFT_CPU1			260
 #define SHIFT_CPU2			480
 #define DOWN_SHIFT			90
 #define MIN_CPU				1
@@ -179,9 +179,13 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 		available_cpus = rev.max_cpu;
 		disable_load = rev.down_shift * online_cpus; 
 
-		if (unlikely(avg_running > rev.shift_all && online_cpus < available_cpus)) {
-			hotplug_all();
-			dprintk("revshift: Onlining all CPUs, avg running: %d\n", avg_running);			
+		if (unlikely(avg_running > rev.shift_all && online_cpus < available_cpus && rev.shift_diff < 3)) {
+				rev.shift_diff++;
+				dprintk("shift_diff is %d\n", rev.shift_diff);
+			}
+		if (unlikely(avg_running > rev.shift_all && online_cpus < available_cpus && rev.shift_diff >= 3)) {		
+				hotplug_all();
+				dprintk("revshift: Onlining all CPUs, avg running: %d\n", avg_running);			
 			}
 		if (avg_running > rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff < 5) {
 				rev.shift_diff++;
@@ -196,8 +200,16 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 				get_avg_running();
 				else hotplug_one();					
 			}
-		if (avg_running > rev.shift_cpu2 && online_cpus == 2) {
-			hotplug_one();		
+		if (avg_running > rev.shift_cpu2 && online_cpus == 2 && rev.shift_diff < 5) {
+				rev.shift_diff++;
+				dprintk("shift_diff is %d\n", rev.shift_diff);
+			}
+		if (avg_running <= rev.shift_cpu2 && online_cpus == 2 && rev.shift_diff > 0) {
+				rev.shift_diff = 0;
+				dprintk("shift_diff reset to %d\n", rev.shift_diff);
+			}
+		if (avg_running > rev.shift_cpu2 && online_cpus == 2 && rev.shift_diff >= 5) {
+				hotplug_one();		
 			} 
 		if (avg_running < disable_load && rev.down_diff < rev.downshift_threshold) {	
 				rev.down_diff++;
@@ -208,10 +220,10 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 				dprintk("down_diff reset to %d\n", rev.down_diff);
 			}
 		if (avg_running < disable_load && rev.down_diff >= rev.downshift_threshold) {
-				if (touchplug) {
-					if (online_cpus == 2)
-								schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
-						else 
+			if (touchplug) {
+				if (online_cpus == 2)
+							schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
+					else 
 							hotplug_offline();
 								goto sched;
 						}

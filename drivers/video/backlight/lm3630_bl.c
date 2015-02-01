@@ -210,11 +210,8 @@ static void lm3630_set_brightness_reg(struct lm3630_device *dev, int level)
 	}
 }
 
-static unsigned int backlight_dimmer = 2;
-module_param(backlight_dimmer, int, 0644);
-
-static unsigned int min_brightness = 3;
-module_param(min_brightness, int, 0644);
+static bool backlight_dimmer = true;
+module_param(backlight_dimmer, bool, 0644);
 
 static void lm3630_set_main_current_level(struct i2c_client *client, int level)
 {
@@ -229,18 +226,15 @@ static void lm3630_set_main_current_level(struct i2c_client *client, int level)
 				level = dev->min_brightness;
 			else if (level > dev->max_brightness)
 				level = dev->max_brightness;
-		if (backlight_dimmer == 1) {	
+		if (backlight_dimmer) {	
 				unsigned int max_current;
-			if (level <= 14)
-				max_current = 1;
-			else if (level > 14)
-				max_current = level / 14;
+						if (level <= 12)
+							max_current = 1;
+						else if (level > 12)
+							max_current = level / 12;
+						if (max_current > 12)
+							max_current = 12;
 			lm3630_set_max_current_reg(dev, max_current);
- 			lm3630_set_brightness_reg(dev, level);
-		} if (backlight_dimmer == 2) {
-				if (level <= dev->min_brightness)
-					level = min_brightness;
-			lm3630_set_brightness_reg(dev, min_brightness);
  			lm3630_set_brightness_reg(dev, level);
 		} else if (dev->blmap) {
 			if (level < dev->blmap_size)

@@ -34,16 +34,6 @@
 #define SAMPLING_PERIODS 		20
 #define INDEX_MAX_VALUE		(SAMPLING_PERIODS - 1)
 
-#define SHIFT_ALL				580
-#define SHIFT_CPU1			260
-#define SHIFT_CPU2			480
-#define DOWN_SHIFT			90
-#define MIN_CPU				1
-#define MAX_CPU				4
-#define TOUCHPLUG_DURATION		5000 /* 5 seconds */
-#define SAMPLE_TIME			20
-#define DOWNSHIFT_THRESHOLD	15
-
 struct rev_tune
 {
 unsigned int shift_all;
@@ -58,15 +48,15 @@ unsigned int downshift_threshold;
 unsigned int down_diff;
 unsigned int shift_diff;
 } rev = {
-	.shift_all = SHIFT_ALL,
-	.shift_cpu1 = SHIFT_CPU1,
-	.shift_cpu2 = SHIFT_CPU2,
-	.down_shift = DOWN_SHIFT,
-	.min_cpu = MIN_CPU,
-	.max_cpu = MAX_CPU,
-	.touchplug_duration = TOUCHPLUG_DURATION,
-	.sample_time = SAMPLE_TIME,
-	.downshift_threshold = DOWNSHIFT_THRESHOLD,
+	.shift_all = 580,
+	.shift_cpu1 = 260,
+	.shift_cpu2 = 480,
+	.down_shift = 90,
+	.min_cpu = 1,
+	.max_cpu = 4,
+	.touchplug_duration = 5000,
+	.sample_time = 20,
+	.downshift_threshold = 15,
 };
 
 static bool touchplug = true;
@@ -115,7 +105,7 @@ static inline void hotplug_one(void)
 	rev.shift_diff = 0;
 }
 
-static inline void hotplug_offline(void)
+static inline void unplug_one(void)
 {
 	unsigned int cpu;
 
@@ -224,11 +214,11 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 				if (online_cpus == 2)
 							schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
 					else 
-							hotplug_offline();
+							unplug_one();
 								goto sched;
 						}
 					if (!touchplug)
-						hotplug_offline();
+						unplug_one();
 							goto sched;
 					}
 
@@ -241,185 +231,54 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 
 /**************SYSFS*******************/
 
-static ssize_t shift_cpu1_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.shift_cpu1);
+#define show_one(file_name, object)					\
+static ssize_t show_##file_name						\
+(struct device * dev, struct device_attribute * attr, char * buf)	\
+{									\
+	return sprintf(buf, "%u\n", rev.object);			\
 }
+show_one(shift_cpu1, shift_cpu1);
+show_one(shift_cpu2, shift_cpu2);
+show_one(shift_all, shift_all);
+show_one(down_shift, down_shift);
+show_one(min_cpu,min_cpu);
+show_one(max_cpu,max_cpu);
+show_one(touchplug_duration, touchplug_duration);
+show_one(sample_time, sample_time);
+show_one(downshift_threshold, downshift_threshold);
 
-static ssize_t shift_cpu1_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
+#define store_one(file_name, object)					\
+static ssize_t store_##file_name					\
+(struct device * dev, struct device_attribute * attr, const char * buf, size_t count)	\
+{									\
+	unsigned int input;						\
+	int ret;							\
+	ret = sscanf(buf, "%u", &input);				\
+	if (ret != 1)							\
+		return -EINVAL;						\
+	rev.object = input;						\
+	return count;							\
+}			
 
-	sscanf(buf, "%u", &new_val);
+store_one(shift_cpu1, shift_cpu1);
+store_one(shift_cpu2, shift_cpu2);
+store_one(shift_all, shift_all);
+store_one(down_shift, down_shift);
+store_one(min_cpu,min_cpu);
+store_one(max_cpu,max_cpu);
+store_one(touchplug_duration, touchplug_duration);
+store_one(sample_time, sample_time);
+store_one(downshift_threshold, downshift_threshold);
 
-	if (new_val != rev.shift_cpu1 && new_val >= 0 && new_val <= 500)
-	{
-		rev.shift_cpu1 = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t shift_cpu2_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.shift_cpu2);
-}
-
-static ssize_t shift_cpu2_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
-
-	sscanf(buf, "%u", &new_val);
-
-	if (new_val != rev.shift_cpu2 && new_val >= 0 && new_val <= 500)
-	{
-		rev.shift_cpu2 = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t shift_all_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.shift_all);
-}
-
-static ssize_t shift_all_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
-
-	sscanf(buf, "%u", &new_val);
-
-	if (new_val != rev.shift_all && new_val >= 0 && new_val <= 600)
-	{
-		rev.shift_all = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t down_shift_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.down_shift);
-}
-
-static ssize_t down_shift_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
-
-	sscanf(buf, "%u", &new_val);
-
-	if (new_val != rev.down_shift && new_val >= 0 && new_val <= 200)
-	{
-		rev.down_shift = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t min_cpu_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.min_cpu);
-}
-
-static ssize_t min_cpu_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
-
-	sscanf(buf, "%u", &new_val);
-
-	if (new_val != rev.min_cpu && new_val >= 1 && new_val <= 4)
-	{
-		rev.min_cpu = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t max_cpu_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.max_cpu);
-}
-
-static ssize_t max_cpu_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
-
-	sscanf(buf, "%u", &new_val);
-
-	if (new_val != rev.max_cpu && new_val >= 1 && new_val <= 4)
-	{
-		rev.max_cpu = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t touchplug_duration_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.touchplug_duration);
-}
-
-static ssize_t touchplug_duration_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int new_val;
-
-	sscanf(buf, "%u", &new_val);
-
-	if (new_val != rev.touchplug_duration && new_val >= 0 && new_val <= 30000)
-	{
-		rev.touchplug_duration = new_val;
-	}
-
-	return size;
-}
-
-static ssize_t downshift_threshold_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.downshift_threshold);
-}
-
-static ssize_t downshift_threshold_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int val;
-
-	sscanf(buf, "%u", &val);
-
-	if (val != rev.downshift_threshold && val >= 1 && val <= 500)
-	{
-		rev.downshift_threshold = val;
-	}
-
-	return size;
-}
-
-static ssize_t sample_time_show(struct device * dev, struct device_attribute * attr, char * buf)
-{
-	return sprintf(buf, "%d\n", rev.sample_time);
-}
-
-static ssize_t sample_time_store(struct device * dev, struct device_attribute * attr, const char * buf, size_t size)
-{
-	unsigned int val;
-
-	sscanf(buf, "%u", &val);
-
-	if (val != rev.sample_time && val >= 1 && val <= 500)
-	{
-		rev.sample_time = val;
-	}
-
-	return size;
-}
-static DEVICE_ATTR(shift_cpu1, 0644, shift_cpu1_show, shift_cpu1_store);
-static DEVICE_ATTR(shift_cpu2, 0644, shift_cpu2_show, shift_cpu2_store);
-static DEVICE_ATTR(shift_all, 0644, shift_all_show, shift_all_store);
-static DEVICE_ATTR(down_shift, 0644, down_shift_show, down_shift_store);
-static DEVICE_ATTR(min_cpu, 0644, min_cpu_show, min_cpu_store);
-static DEVICE_ATTR(max_cpu, 0644, max_cpu_show, max_cpu_store);
-static DEVICE_ATTR(touchplug_duration, 0644, touchplug_duration_show, touchplug_duration_store);
-static DEVICE_ATTR(downshift_threshold, 0644, downshift_threshold_show, downshift_threshold_store);
-static DEVICE_ATTR(sample_time, 0644, sample_time_show, sample_time_store);
+static DEVICE_ATTR(shift_cpu1, 0644, show_shift_cpu1, store_shift_cpu1);
+static DEVICE_ATTR(shift_cpu2, 0644, show_shift_cpu2, store_shift_cpu2);
+static DEVICE_ATTR(shift_all, 0644, show_shift_all, store_shift_all);
+static DEVICE_ATTR(down_shift, 0644, show_down_shift, store_down_shift);
+static DEVICE_ATTR(min_cpu, 0644, show_min_cpu, store_min_cpu);
+static DEVICE_ATTR(max_cpu, 0644, show_max_cpu, store_max_cpu);
+static DEVICE_ATTR(touchplug_duration, 0644, show_touchplug_duration, store_touchplug_duration);
+static DEVICE_ATTR(downshift_threshold, 0644, show_downshift_threshold, store_downshift_threshold);
+static DEVICE_ATTR(sample_time, 0644, show_sample_time, store_sample_time);
 
 static struct attribute *revshift_hotplug_attributes[] = 
     {

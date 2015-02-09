@@ -16,10 +16,6 @@
  *
  */
 
-/* Revshift_hotplug
- * Based from Will Tisdale's (aka Thalamus) auto_hotplug.
- */
-
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -31,14 +27,10 @@
 #include <linux/device.h>
 #include <linux/miscdevice.h>
 
-#define SAMPLING_PERIODS 		20
-#define INDEX_MAX_VALUE		(SAMPLING_PERIODS - 1)
-
 struct rev_tune
 {
 unsigned int shift_all;
 unsigned int shift_cpu1;
-unsigned int shift_cpu2;
 unsigned int down_shift;
 unsigned int min_cpu;
 unsigned int max_cpu;
@@ -47,11 +39,11 @@ unsigned int sample_time;
 unsigned int downshift_threshold;
 unsigned int down_diff;
 unsigned int shift_diff;
+unsigned int shift_diff_all;
 } rev = {
-	.shift_all = 580,
-	.shift_cpu1 = 260,
-	.shift_cpu2 = 480,
-	.down_shift = 90,
+	.shift_all = 185,
+	.shift_cpu1 = 30,
+	.down_shift = 20,
 	.min_cpu = 1,
 	.max_cpu = 4,
 	.touchplug_duration = 5000,
@@ -76,16 +68,14 @@ static struct delayed_work touchplug_down;
 static struct workqueue_struct *hotplug_decision_wq;
 static struct workqueue_struct *touchplug_wq;
 
-static unsigned int history[SAMPLING_PERIODS];
-static unsigned int index;
-
+extern unsigned int report_load_at_max_freq(void);
 
 static inline void hotplug_all(void)
 {
 	unsigned int cpu;
 
 	for_each_possible_cpu(cpu) 
-		if (!cpu_online(cpu)) 
+		if (!cpu_online(cpu) && num_online_cpus() < rev.max_cpu) 
 			cpu_up(cpu);
 	
 	rev.down_diff = 0;
@@ -107,20 +97,21 @@ static inline void hotplug_one(void)
 
 static inline void unplug_one(void)
 {
-	unsigned int cpu;
+	unsigned int i;
 
-	for_each_online_cpu(cpu) 
-		if (num_online_cpus() > rev.min_cpu) {
-			if (cpu_online(cpu)) 
-				cpu_down(num_online_cpus() - 1); 
-				dprintk("offline CPU  %d\n", num_online_cpus());
-				break;
+	for (i = num_online_cpus(); i > rev.min_cpu; i--) {
+		if (cpu_online(i))
+			break;
 	}
+			cpu_down(i);
+			printk("offline CPU  %d\n", i);
+			
 	rev.down_diff = 0;
 	rev.shift_diff = 0;
+	rev.shift_diff_all = 0;
 }
 
-static void __init touchplug_boost_work_fn(struct work_struct *work)
+static void __cpuinit touchplug_boost_work_fn(struct work_struct *work)
 {
 	unsigned int online_cpus = num_online_cpus();
 
@@ -129,7 +120,7 @@ static void __init touchplug_boost_work_fn(struct work_struct *work)
 	dprintk("touchplug detected\n");
 }
 
-static void  __init touchplug_down_fn(struct work_struct *work)
+static void  __cpuinit touchplug_down_fn(struct work_struct *work)
 {
 	unsigned int online_cpus = num_online_cpus();
 
@@ -137,96 +128,61 @@ static void  __init touchplug_down_fn(struct work_struct *work)
 			cpu_down(1);
 }
 
-static unsigned int  get_avg_running(void)
-{
-	unsigned int running, i, avg_running = 0;
-
-	running = nr_running() * 100;
-	history[index] = running;
-		dprintk("index is: %d\n", index);
-		dprintk("running is: %d\n", running);
-	
-	for (i = 0; i < SAMPLING_PERIODS; i++) {
-		avg_running += history[i];
-	}
-
-	if (unlikely(index++ == INDEX_MAX_VALUE))
-		index = 0;
-
-	avg_running = avg_running / SAMPLING_PERIODS;
-	dprintk("average_running is: %d\n", avg_running);
-
-	return avg_running;
-
-}
-
 static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 {
-	unsigned int online_cpus, available_cpus, disable_load,  avg_running;
-
-		avg_running = get_avg_running(); 
+	unsigned int online_cpus, down_load, up_load, load, down_shift;
+	
+		load = report_load_at_max_freq();
+			dprintk("load is %d\n", load);
 		online_cpus = num_online_cpus();
-		available_cpus = rev.max_cpu;
-		disable_load = rev.down_shift * online_cpus; 
+		up_load = min((rev.shift_cpu1 * online_cpus * online_cpus), rev.shift_all);
+		down_shift = rev.shift_cpu1 * (online_cpus - 1) * (online_cpus - 1);
+		down_load = min((down_shift - rev.down_shift), (rev.shift_all - rev.down_shift));
+			dprintk("down_load is %d\n", down_load);
 
-		if (unlikely(avg_running > rev.shift_all && online_cpus < available_cpus && rev.shift_diff < 3)) {
-				rev.shift_diff++;
-				dprintk("shift_diff is %d\n", rev.shift_diff);
-			}
-		if (unlikely(avg_running > rev.shift_all && online_cpus < available_cpus && rev.shift_diff >= 3)) {		
+		if (unlikely(load > rev.shift_all && online_cpus < rev.max_cpu && rev.shift_diff_all < 3)) {
+				rev.shift_diff_all++;
+				dprintk("shift_diff_all is %d\n", rev.shift_diff);
+			if (rev.shift_diff_all >= 3) {		
 				hotplug_all();
-				dprintk("revshift: Onlining all CPUs, avg running: %d\n", avg_running);			
+				dprintk("revshift: Onlining all CPUs, avg running: %d\n", load);	
+				}		
 			}
-		if (avg_running > rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff < 5) {
+		if (load <= rev.shift_all && online_cpus < rev.max_cpu && rev.shift_diff_all > 0) {
+				rev.shift_diff_all = 0;
+				dprintk("shift_diff_all reset to %d\n", rev.shift_diff);
+			}
+		if (load > up_load && online_cpus < (rev.max_cpu - 1) && rev.shift_diff < 5) {
 				rev.shift_diff++;
 				dprintk("shift_diff is %d\n", rev.shift_diff);
+			if (rev.shift_diff >= 5) {
+				hotplug_one();	
+				}				
 			}
-		if (avg_running <= rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff > 0) {
+		if (load <= up_load && online_cpus < (rev.max_cpu - 1) && rev.shift_diff > 0) {
 				rev.shift_diff = 0;
 				dprintk("shift_diff reset to %d\n", rev.shift_diff);
-			}
-		if (avg_running > rev.shift_cpu1 && online_cpus == 1 && rev.shift_diff >= 5) {
-			if (touchplug) 
-				get_avg_running();
-				else hotplug_one();					
-			}
-		if (avg_running > rev.shift_cpu2 && online_cpus == 2 && rev.shift_diff < 5) {
-				rev.shift_diff++;
-				dprintk("shift_diff is %d\n", rev.shift_diff);
-			}
-		if (avg_running <= rev.shift_cpu2 && online_cpus == 2 && rev.shift_diff > 0) {
-				rev.shift_diff = 0;
-				dprintk("shift_diff reset to %d\n", rev.shift_diff);
-			}
-		if (avg_running > rev.shift_cpu2 && online_cpus == 2 && rev.shift_diff >= 5) {
-				hotplug_one();		
-			} 
-		if (avg_running < disable_load && rev.down_diff < rev.downshift_threshold) {	
+			}	
+		if (load < down_load && rev.down_diff < rev.downshift_threshold) {	
 				rev.down_diff++;
 				dprintk("down_diff is %d\n", rev.down_diff);
-			}
-		if (avg_running >= disable_load && rev.down_diff > 0) {	
-				rev.down_diff = 0;
-				dprintk("down_diff reset to %d\n", rev.down_diff);
-			}
-		if (avg_running < disable_load && rev.down_diff >= rev.downshift_threshold) {
-			if (touchplug) {
-				if (online_cpus == 2)
-							schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
+			if (rev.down_diff >= rev.downshift_threshold) {
+				if (touchplug) {
+					if (online_cpus == 2)
+						schedule_delayed_work_on(0, &touchplug_down, msecs_to_jiffies(rev.touchplug_duration));
 					else 
-							unplug_one();
-								goto sched;
+						unplug_one();
 						}
 					if (!touchplug)
 						unplug_one();
-							goto sched;
-					}
-
+				schedule_delayed_work_on(0, &hotplug_decision_work, HZ);
+				}
+			}		
+		if (load >= down_load && rev.down_diff > 0) {	
+				rev.down_diff = 0;
+				dprintk("down_diff reset to %d\n", rev.down_diff);
+			}	
 	schedule_delayed_work_on(0, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
-
-	sched:
-	schedule_delayed_work_on(0, &hotplug_decision_work, HZ);
-
 }
 
 /**************SYSFS*******************/
@@ -238,7 +194,6 @@ static ssize_t show_##file_name						\
 	return sprintf(buf, "%u\n", rev.object);			\
 }
 show_one(shift_cpu1, shift_cpu1);
-show_one(shift_cpu2, shift_cpu2);
 show_one(shift_all, shift_all);
 show_one(down_shift, down_shift);
 show_one(min_cpu,min_cpu);
@@ -261,7 +216,6 @@ static ssize_t store_##file_name					\
 }			
 
 store_one(shift_cpu1, shift_cpu1);
-store_one(shift_cpu2, shift_cpu2);
 store_one(shift_all, shift_all);
 store_one(down_shift, down_shift);
 store_one(min_cpu,min_cpu);
@@ -271,7 +225,6 @@ store_one(sample_time, sample_time);
 store_one(downshift_threshold, downshift_threshold);
 
 static DEVICE_ATTR(shift_cpu1, 0644, show_shift_cpu1, store_shift_cpu1);
-static DEVICE_ATTR(shift_cpu2, 0644, show_shift_cpu2, store_shift_cpu2);
 static DEVICE_ATTR(shift_all, 0644, show_shift_all, store_shift_all);
 static DEVICE_ATTR(down_shift, 0644, show_down_shift, store_down_shift);
 static DEVICE_ATTR(min_cpu, 0644, show_min_cpu, store_min_cpu);
@@ -283,7 +236,6 @@ static DEVICE_ATTR(sample_time, 0644, show_sample_time, store_sample_time);
 static struct attribute *revshift_hotplug_attributes[] = 
     {
 	&dev_attr_shift_cpu1.attr,
-	&dev_attr_shift_cpu2.attr,
 	&dev_attr_shift_all.attr,
 	&dev_attr_down_shift.attr,
 	&dev_attr_min_cpu.attr,

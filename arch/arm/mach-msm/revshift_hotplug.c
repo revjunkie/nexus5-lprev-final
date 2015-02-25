@@ -42,12 +42,12 @@ unsigned int down_diff;
 unsigned int shift_diff;
 unsigned int shift_diff_all;
 } rev = {
-	.shift_all = 185,
+	.shift_all = 175,
 	.shift_cpu1 = 30,
-	.shift_threshold = 4,
-	.down_shift = 20,
-	.downshift_threshold = 10,
-	.sample_time = 100,
+	.shift_threshold = 3,
+	.down_shift = 15,
+	.downshift_threshold = 5,
+	.sample_time = 200,
 	.touchplug_duration = 5000,
 	.min_cpu = 1,
 	.max_cpu = 4,	
@@ -60,7 +60,7 @@ unsigned int cur;
 
 static DEFINE_PER_CPU(struct cpu_info, rev_info);
 
-static bool touchplug = true;
+static bool touchplug = false;
 module_param(touchplug, bool, 0644);
 static unsigned int debug = 0;
 module_param(debug, uint, 0644);
@@ -133,7 +133,7 @@ static inline void unplug_one(void)
 {	
 	int cpu = get_idle_cpu();
 	
-	if (cpu < nr_cpu_ids) 
+	if (cpu != 0) 
 		cpu_down(cpu);
 		dprintk("offline cpu %d\n", cpu);
 		
@@ -169,34 +169,34 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 	load = report_load_at_max_freq();
 		dprintk("load is %d\n", load);
 	online_cpus = num_online_cpus();
-	up_load = min((rev.shift_cpu1 * online_cpus * online_cpus), rev.shift_all);
+	up_load = rev.shift_cpu1 * online_cpus * online_cpus;
 	down_shift = rev.shift_cpu1 * (online_cpus - 1) * (online_cpus - 1);
 	down_load = min((down_shift - rev.down_shift), (rev.shift_all - rev.down_shift));
-
-		if (unlikely(load > rev.shift_all && online_cpus < rev.max_cpu && rev.shift_diff_all < (rev.shift_threshold - 2))) {
+	
+	if (online_cpus < rev.max_cpu) {
+		if (load > rev.shift_all && rev.shift_diff_all < (rev.shift_threshold - 2)) {
 				rev.shift_diff_all++;
 				dprintk("shift_diff_all is %d\n", rev.shift_diff_all);
 			if (rev.shift_diff_all >= (rev.shift_threshold - 2)) {		
 				hotplug_all();
 				dprintk("revshift: Onlining all CPUs, load: %d\n", load);	
 				}		
-			}
-		if (load <= rev.shift_all && online_cpus < rev.max_cpu && rev.shift_diff_all > 0) {
+		} else if (load <= rev.shift_all && rev.shift_diff_all > 0) {
 				rev.shift_diff_all = 0;
 				dprintk("shift_diff_all reset to %d\n", rev.shift_diff_all);
-				}	
-		if (load > up_load && online_cpus < (rev.max_cpu - 1) && rev.shift_diff < rev.shift_threshold) {
+		} else if (load > up_load && load < rev.shift_all && rev.shift_diff < rev.shift_threshold) {
 				rev.shift_diff++;
 				dprintk("shift_diff is %d\n", rev.shift_diff);
 			if (rev.shift_diff >= rev.shift_threshold) {
 				hotplug_one();	
 				}				
-			}	
-		if (load <= up_load && online_cpus < (rev.max_cpu - 1) && rev.shift_diff > 0) {
+		} else if (load <= up_load && load < rev.shift_all && rev.shift_diff > 0) {
 				rev.shift_diff = 0;
 				dprintk("shift_diff reset to %d\n", rev.shift_diff);
 			}
-		if (load < down_load && online_cpus > rev.min_cpu && rev.down_diff < rev.downshift_threshold) {
+		}
+	if (online_cpus > rev.min_cpu) {	
+		if (load < down_load && rev.down_diff < rev.downshift_threshold) {
 				dprintk("down_load is %d\n", down_load);	
 				rev.down_diff++;
 				dprintk("down_diff is %d\n", rev.down_diff);
@@ -209,11 +209,11 @@ static void  __cpuinit hotplug_decision_work_fn(struct work_struct *work)
 					} else
 					unplug_one();
 				}
-			}	
-		if (load >= down_load && online_cpus > rev.min_cpu && rev.down_diff > 0) {	
+		} else if (load >= down_load && rev.down_diff > 0) {	
 				rev.down_diff--;
 				dprintk("down_diff reset to %d\n", rev.down_diff);
-			}		
+			}
+		}		
 	queue_delayed_work(hotplug_decision_wq, &hotplug_decision_work, msecs_to_jiffies(rev.sample_time));
 }
 
@@ -341,21 +341,7 @@ static void touchplug_input_disconnect(struct input_handle *handle)
 }
 
 static const struct input_device_id touchplug_ids[] = {
- 	{
- 		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
- 			 INPUT_DEVICE_ID_MATCH_ABSBIT,
- 		.evbit = { BIT_MASK(EV_ABS) },
- 		.absbit = { [BIT_WORD(ABS_MT_POSITION_X)] =
- 			    BIT_MASK(ABS_MT_POSITION_X) |
- 			    BIT_MASK(ABS_MT_POSITION_Y) },
- 	}, /* multi-touch touchscreen */
- 	{
- 		.flags = INPUT_DEVICE_ID_MATCH_KEYBIT |
- 			 INPUT_DEVICE_ID_MATCH_ABSBIT,
- 		.keybit = { [BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH) },
- 		.absbit = { [BIT_WORD(ABS_X)] =
- 			    BIT_MASK(ABS_X) | BIT_MASK(ABS_Y) },
- 	}, /* touchpad */
+ 	{ .driver_info = 1 },
  	{ },
 };
  
